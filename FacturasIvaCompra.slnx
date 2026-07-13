@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="FacturasIvaCompra.Application/FacturasIvaCompra.Application.csproj" />
+  <Project Path="FacturasIvaCompra.Domain/FacturasIvaCompra.Domain.csproj" />
+  <Project Path="FacturasIvaCompra.Infrastructure/FacturasIvaCompra.Infrastructure.csproj" />
+  <Project Path="FacturasIvaCompra.UI/FacturasIvaCompra.UI.csproj" />
+</Solution>

@@ -1,0 +1,33 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+publish/
+[Dd]ebug/
+[Rr]elease/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Resultado de dotnet publish (self-contained, se genera on demand)
+FacturasIvaCompra.UI/publish/
+
+# Logs de la app (logs/app.log junto al ejecutable)
+logs/
+*.log
+
+# Modelo de OCR descargado automáticamente en el primer arranque
+tessdata/
+
+# Archivos de sistema
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Secretos locales de dotnet user-secrets (si se llegan a usar)
+*.pfx
+*.env
