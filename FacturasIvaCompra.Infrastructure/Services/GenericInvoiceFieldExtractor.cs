@@ -409,6 +409,31 @@ namespace FacturasIvaCompra.Infrastructure.Services
                 factura.Importe_Perc_IVA_CC = percepcion;
             }
 
+            // Validación cruzada Total/Neto/IVA: cada campo se extrae con su propio regex y
+            // puede "acertar" por separado (matchear una etiqueta válida) pero igual entregar
+            // una combinación matemáticamente imposible — p.ej. una etiqueta "Total" que
+            // matcheó un número de otra parte del documento (cuota, página, etc.) en vez del
+            // total real. Si Total no cierra contra Neto + IVA% (+ percepción), se confía en
+            // Neto/IVA% (etiquetas más específicas y menos propensas a falsos positivos que las
+            // de Total, ver comentario de Importe_Total_Operacion_CC más arriba) y se recalcula
+            // Total, marcándolo como corregido para que el usuario lo revise antes de aprobar
+            // en vez de aprobar a ciegas un valor mal interpretado.
+            // Se omite si Neto_CC es 0 (constancias RET.SUSS u otro caso sin neto real: la
+            // fórmula no tiene sentido) o si Total/Neto/Porc_Iva no se pudieron extraer.
+            if (factura.Neto_CC > 0
+                && !result.MissingFields.Contains(nameof(FacturaCompra.Importe_Total_Operacion_CC))
+                && !result.MissingFields.Contains(nameof(FacturaCompra.Neto_CC))
+                && !result.MissingFields.Contains(nameof(FacturaCompra.Porc_Iva_CC)))
+            {
+                var totalCalculado = factura.Neto_CC * (1 + factura.Porc_Iva_CC / 100m) + factura.Importe_Perc_IVA_CC;
+                var tolerancia = Math.Max(1.00m, totalCalculado * 0.01m);
+                if (Math.Abs(factura.Importe_Total_Operacion_CC - totalCalculado) > tolerancia)
+                {
+                    factura.Importe_Total_Operacion_CC = Math.Round(totalCalculado, 2);
+                    result.CorrectedFields.Add(nameof(FacturaCompra.Importe_Total_Operacion_CC));
+                }
+            }
+
             return result;
         }
 

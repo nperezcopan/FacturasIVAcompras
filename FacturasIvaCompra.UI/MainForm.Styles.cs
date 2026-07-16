@@ -4,6 +4,7 @@ namespace FacturasIvaCompra.UI
     {
         private static readonly Color ColorFondo = Color.FromArgb(245, 245, 248);
         private static readonly Color ColorCampoFaltante = Color.FromArgb(255, 244, 179);   // amarillo: crítico no encontrado
+        private static readonly Color ColorCampoCorregido = Color.FromArgb(173, 216, 230);  // celeste: autocorregido por validación Total/Neto/IVA, revisar
         private static readonly Color ColorDefaultNegocio = Color.FromArgb(230, 230, 230);  // gris: nunca se intenta extraer, es default
         private static readonly Color ColorCeldaNormal = Color.White;
 

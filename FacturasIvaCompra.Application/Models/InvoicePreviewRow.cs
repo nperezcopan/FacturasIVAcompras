@@ -47,14 +47,19 @@ namespace FacturasIvaCompra.Application.Models
 
         /// <summary>Nombres de propiedad cuyo valor no pudo extraerse; usado solo por el grid, no se persiste.</summary>
         public HashSet<string> MissingFields { get; set; } = new();
+
+        /// <summary>Nombres de propiedad autocorregidos por validación cruzada Total/Neto/IVA; usado solo por el grid, no se persiste.</summary>
+        public HashSet<string> CorrectedFields { get; set; } = new();
         public bool HasPendingReview => MissingFields.Count > 0;
 
-        public static InvoicePreviewRow FromExtraction(FacturaCompra factura, string sourceFilePath, HashSet<string> missingFields)
+        public static InvoicePreviewRow FromExtraction(
+            FacturaCompra factura, string sourceFilePath, HashSet<string> missingFields, HashSet<string> correctedFields)
         {
             return new InvoicePreviewRow
             {
                 SourceFilePath = sourceFilePath,
                 MissingFields = new HashSet<string>(missingFields),
+                CorrectedFields = new HashSet<string>(correctedFields),
                 Mes_CC = factura.Mes_CC,
                 Anio_CC = factura.Anio_CC,
                 Fecha_Comprobante_CC = factura.Fecha_Comprobante_CC,

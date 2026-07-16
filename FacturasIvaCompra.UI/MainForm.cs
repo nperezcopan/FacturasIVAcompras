@@ -128,7 +128,11 @@ namespace FacturasIvaCompra.UI
 
             if (e.RowIndex >= _previewRows.Count) return;
             var row = _previewRows[e.RowIndex];
-            e.CellStyle!.BackColor = row.MissingFields.Contains(columnName) ? ColorCampoFaltante : ColorCeldaNormal;
+            e.CellStyle!.BackColor = row.MissingFields.Contains(columnName)
+                ? ColorCampoFaltante
+                : row.CorrectedFields.Contains(columnName)
+                    ? ColorCampoCorregido
+                    : ColorCeldaNormal;
         }
 
         private void DgvPreview_CellEndEdit(object? sender, DataGridViewCellEventArgs e)
@@ -137,7 +141,12 @@ namespace FacturasIvaCompra.UI
 
             var columnName = dgvPreview.Columns[e.ColumnIndex].Name;
             var row = _previewRows[e.RowIndex];
-            if (row.MissingFields.Remove(columnName))
+
+            // El edit manual del usuario "confirma" el valor: se saca tanto de MissingFields
+            // como de CorrectedFields (si estaba en alguno) para que la celda vuelva a blanco.
+            var faltanteSacado = row.MissingFields.Remove(columnName);
+            var corregidoSacado = row.CorrectedFields.Remove(columnName);
+            if (faltanteSacado || corregidoSacado)
             {
                 dgvPreview.InvalidateCell(e.ColumnIndex, e.RowIndex);
                 ActualizarResumen();
