@@ -10,12 +10,22 @@ namespace FacturasIvaCompra.Infrastructure.Services
 {
     /// <summary>
     /// Extrae los campos fiscales de una factura de compra por heurísticas/regex genéricas,
-    /// sin depender de un template por proveedor. Soporta dos familias de layout observadas:
+    /// sin depender de un template por proveedor. Soporta cuatro familias de layout observadas:
     /// la de referencia original (tipo Movistar, etiqueta y valor adyacentes: "Fecha de
-    /// emisión: dd/mm/aaaa") y la de comprobantes generados por el portal de AFIP/ARCA
+    /// emisión: dd/mm/aaaa"), la de comprobantes generados por el portal de AFIP/ARCA
     /// ("Comprobantes en línea"), donde PdfPig extrae las etiquetas agrupadas por un lado y
-    /// los valores por otro (no quedan adyacentes en el texto). Los regex "Arca*" son
-    /// fallbacks que se prueban solo cuando el patrón "etiqueta adyacente" no matchea.
+    /// los valores por otro (no quedan adyacentes en el texto) — los regex "Arca*" son
+    /// fallbacks que se prueban solo cuando el patrón "etiqueta adyacente" no matchea —, la
+    /// de proveedores con membrete de imagen (p.ej. STOP LOSS Bureau de Reaseguros), donde el
+    /// CUIT/razón social del emisor y las etiquetas "Subtotal"/"TOTAL"/"IVA Insc." no están en
+    /// el texto nativo (son parte del gráfico de fondo) y solo aparecen si BatchInvoiceProcessingService
+    /// agrega una pasada de OCR de página completa — los regex "*Bare*"/"*Insc*" son los
+    /// fallbacks para esa familia —, y la de constancias de retención SUSS ("REG.GRAL
+    /// RET.SUSS", p.ej. Vicente Trapani S.A.), que NO es una factura de compra AFIP: no tiene
+    /// tipo de comprobante A/B/C ni discrimina IVA, y su único importe es el retenido. Se
+    /// carga igual en AFIP_Citi_Compra con un Tipo_Comprobante_CC marcador (ver
+    /// TipoComprobanteRetencionSuss) por decisión explícita de negocio, no porque encaje en el
+    /// esquema CITI Compras / RG 3685.
     /// </summary>
     public class GenericInvoiceFieldExtractor : IInvoiceFieldExtractor
     {
@@ -37,6 +47,21 @@ namespace FacturasIvaCompra.Infrastructure.Services
             new(@"\d{1,2}/\d{1,2}/\d{2,4}\s+\d{1,2}/\d{1,2}/\d{2,4}\s+\d{1,2}/\d{1,2}/\d{2,4}\s*[\r\n]+\s*(\d{1,2}/\d{1,2}/\d{2,4})",
                 RegexOptions.Compiled);
 
+        // Plantilla STOP LOSS: la fecha de emisión no tiene ninguna etiqueta adyacente ("Bs.
+        // As., dd/mm/aaaa" — el "Bs. As.," es parte del membrete de imagen, no texto). Último
+        // recurso: se toma la primera fecha "suelta" del documento, tolerando el espacio que
+        // PdfPig/OCR pegan junto a las barras ("18/ 05/ 2026").
+        private static readonly Regex FechaBareRegex =
+            new(@"(?<!\d)(\d{1,2})\s*/\s*(\d{1,2})\s*/\s*(\d{2,4})(?!\d)", RegexOptions.Compiled);
+
+        // Plantilla RET.SUSS: la fecha va con la etiqueta "Fecha" sola (sin "de emisión"), p.ej.
+        // "Fecha  30/4/2026". Se prueba antes que FechaBareRegex (que toma la primera fecha
+        // suelta del documento sin importar etiqueta) porque este comprobante también imprime
+        // otra fecha suelta más arriba en el membrete (inicio de actividad del emisor), que
+        // FechaBareRegex tomaría por error si no hay una etiqueta más específica para preferir.
+        private static readonly Regex FechaEtiquetaBareRegex =
+            new(@"\bFecha\s*:?\s*(\d{1,2}\s*/\s*\d{1,2}\s*/\s*\d{2,4})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         // Nota: PdfPig suele pegar palabras sin espacio en los puntos donde el layout original
         // usaba posicionamiento en vez de un glifo de espacio (p.ej. "Factura3108-00172981",
         // "N° 1ORIGINAL"). Como dígito y letra son ambos \w para .NET regex, un \b tradicional
@@ -45,9 +70,11 @@ namespace FacturasIvaCompra.Infrastructure.Services
             new(@"C[oó]d(?:igo)?\.?\s*N[°ºo]?\.?\s*(\d{1,2})(?!\d)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         // Plantilla ARCA: el código AFIP se imprime como "COD. 01" / "COD. 04" / "COD. 011",
-        // sin el "N°" que exige CodigoComprobanteRegex.
+        // sin el "N°" que exige CodigoComprobanteRegex. Se tolera un espacio entre cada letra
+        // porque en la plantilla STOP LOSS PdfPig separa "cod." en "c" + "od." (fuente de paso
+        // ancho: ver comentario de clase), quedando "c od. 01" en el texto reconstruido.
         private static readonly Regex CodigoComprobanteArcaRegex =
-            new(@"\bCOD\.?\s*(\d{1,3})\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            new(@"\bC\s*O\s*D\.?\s*(\d{1,3})\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private static readonly Regex TipoDocumentoLetraRegex =
             new(@"(FACTURA|NOTA\s+DE\s+CR[EÉ]DITO|NOTA\s+DE\s+D[EÉ]BITO)(?![A-Za-zÀ-ÿ])[^A-Z]{0,15}\b([ABC])\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -61,11 +88,21 @@ namespace FacturasIvaCompra.Infrastructure.Services
             new(@"Punto\s+de\s+Venta\s*:?\s*(\d{4,5})\s*(?:Comp\.?\s*N(?:ro|[°º])\.?\s*:?\s*)?(\d{6,8})",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        // Se tolera un espacio junto al guión por el mismo motivo que ComprobanteNumeroConLetraRegex
+        // (plantilla RET.SUSS: "0000 - 00022129", sin etiqueta "N°"/"Comp." que active ese regex).
         private static readonly Regex ComprobanteNumeroGenericoRegex =
-            new(@"(?<!\d)(\d{4,5})-(\d{6,8})(?!\d)", RegexOptions.Compiled);
+            new(@"(?<!\d)(\d{4,5})\s*-\s*(\d{6,8})(?!\d)", RegexOptions.Compiled);
 
+        // Plantilla STOP LOSS: "Nº A00002- 00008787" — la letra del comprobante (A/B/C) queda
+        // pegada al punto de venta, sin la etiqueta "Comp. Nro" que exige
+        // ComprobanteNumeroEtiquetadoRegex. Se tolera el espacio que PdfPig deja junto al
+        // guión (son dos "palabras" distintas para PdfPig aunque no haya separación visual).
+        private static readonly Regex ComprobanteNumeroConLetraRegex =
+            new(@"N[°º]\.?\s*:?\s*[A-C]?\s*(\d{4,5})\s*-\s*(\d{6,8})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        // Se tolera un espacio junto a cada guión por el mismo motivo que ComprobanteNumeroConLetraRegex.
         private static readonly Regex CuitConGuionesRegex =
-            new(@"C\.?\s*U\.?\s*I\.?\s*T\.?\s*:?\s*(\d{2}-\d{8}-\d{1})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            new(@"C\.?\s*U\.?\s*I\.?\s*T\.?\s*:?\s*(\d{2}\s*-\s*\d{8}\s*-\s*\d{1})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private static readonly Regex CuitSinGuionesRegex =
             new(@"C\.?\s*U\.?\s*I\.?\s*T\.?\s*:?\s*(\d{11})\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -76,14 +113,33 @@ namespace FacturasIvaCompra.Infrastructure.Services
         // CUIT "pelados" (11 dígitos) del texto y se descarta el de Copan por exclusión.
         private static readonly Regex CuitBareRegex = new(@"\b\d{11}\b", RegexOptions.Compiled);
 
+        // Plantilla STOP LOSS: el CUIT del emisor está en el membrete de imagen, sin texto
+        // seleccionable — solo aparece si se agrega una pasada de OCR, y a veces la etiqueta
+        // "CUIT" sale mal reconocida (p.ej. "C.U.LT."), por lo que CuitConGuionesRegex tampoco
+        // la encuentra. Último recurso: cualquier CUIT "con guiones" del texto que no sea el
+        // propio (mismo criterio de exclusión que CuitBareRegex).
+        private static readonly Regex CuitBareConGuionesRegex =
+            new(@"\b\d{2}\s*-\s*\d{8}\s*-\s*\d{1}\b", RegexOptions.Compiled);
+
+        // Monto tolerante a un espacio suelto pegado a cada separador — "6, 242. 55" en vez de
+        // "6,242.55" — típico del OCR (falla de kerning al reconocer el glifo). A diferencia de
+        // MontoPattern no exige separador de miles ni 2 decimales exactos, porque acá el
+        // objetivo es capturar el monto completo (para que EsArNumberParser.TryParseMonto lo
+        // interprete después), no delimitar campos pegados sin separador.
+        private const string MontoOcrPattern = @"\d{1,3}(?:[.,]\s?\d+)*";
+
         private static readonly Regex TotalAPagarRegex =
-            new(@"Total\s+a\s+[Pp]agar\s*:?\s*\(?\$?\)?\s*([\d\.,]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            new($@"Total\s+a\s+[Pp]agar\s*:?\s*\(?\$?\)?\s*({MontoOcrPattern})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private static readonly Regex ImporteTotalRegex =
-            new(@"Importe\s+Total\s*:?\s*\$?\s*([\d\.,]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            new($@"Importe\s+Total\s*:?\s*\$?\s*({MontoOcrPattern})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        // Plantilla STOP LOSS: la etiqueta es "TOTAL" sola, sin "Importe"/"a Pagar" delante.
+        private static readonly Regex TotalBareRegex =
+            new($@"\bTOTAL\s*:?\s*\$?\s*({MontoOcrPattern})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private static readonly Regex NetoRegex =
-            new(@"(?:Importe\s+Neto\s+Gravado|Neto\s+Gravado|Base\s+Imponible|Subtotal)\s*:?\s*\$?\s*([\d\.,]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            new($@"(?:Importe\s+Neto\s+Gravado|Neto\s+Gravado|Base\s+Imponible|Subtotal)\s*:?\s*\$?\s*({MontoOcrPattern})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         // Monto es-AR con separador de miles "." y 2 decimales tras ",": p.ej. "52.645,00".
         // Se usa como bloque para "desempaquetar" filas de tabla que PdfPig pega sin separador
@@ -107,6 +163,12 @@ namespace FacturasIvaCompra.Infrastructure.Services
         // ([\d\.,]+) que ImporteTotalRegex/NetoRegex.
         private static readonly Regex PorcIvaTotalesRegex =
             new(@"IVA\s*(21|27|10[.,]5|5|2[.,]5)\s*%\s*:?\s*\$?\s*([\d\.,]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        // Plantilla STOP LOSS: "IVA Insc. 21  1.083,42" — el símbolo "%" no está (se pierde
+        // seguido en el OCR, que es de donde sale esta etiqueta: ver comentario de clase). El
+        // importe es el de IVA (no la base), igual que PorcIvaTotalesRegex.
+        private static readonly Regex PorcIvaInscRegex =
+            new($@"IVA\s+Insc\.?\s*(21|27|10[.,]5|5|2[.,]5)\s*%?\.?\s*:?\s*\$?\s*({MontoOcrPattern})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         // La fila de percepción suele venir como "Percepción I.V.A. <base><alícuota><importe>"
         // pegados sin separador; se descartan base y alícuota y se captura el tercer monto.
@@ -137,6 +199,28 @@ namespace FacturasIvaCompra.Infrastructure.Services
 
         private const int VentanaBusquedaRazonSocial = 1200;
 
+        // Plantilla RET.SUSS: constancia de retención SUSS (p.ej. "REG.GRAL RET.SUSS" de
+        // Vicente Trapani S.A.) — no es una factura de compra AFIP, ver comentario de clase.
+        private static readonly Regex RetencionSussSenalRegex =
+            new(@"REG\.?\s*GRAL\.?\s*RET\.?\s*SUSS|CONSTANCIA\s+DE\s+RETENCI[OÓ]N", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        // Código marcador interno para Tipo_Comprobante_CC en constancias RET.SUSS: no es un
+        // código AFIP de la tabla CITI Compras (ver AfipCbteTypeMapper, que solo cubre
+        // Factura/Nota/Recibo A/B/C). Se eligió "900" por estar fuera del rango AFIP real
+        // (1-99) para que sea identificable en reportes. Es una decisión de negocio explícita:
+        // cargar estas constancias en AFIP_Citi_Compra no es correcto para la RG 3685, pero se
+        // hace igual para no perder el registro de la retención.
+        private const string TipoComprobanteRetencionSuss = "900";
+
+        // Plantilla RET.SUSS: el importe retenido no tiene etiqueta "Total"/"Importe Total" —
+        // la columna de la tabla dice solo "IMPORTE", y su valor puede no quedar adyacente a esa
+        // etiqueta en el texto reconstruido. Se toma el ÚLTIMO monto con formato es-AR completo
+        // (separador de miles + 2 decimales) del documento: es el importe retenido, que se repite
+        // en letras ("Son Pesos: ...") y en el círculo del pie, después de la "Base de cálculo"
+        // de la tabla. Solo se usa como fallback cuando ya se confirmó la señal RET.SUSS, para no
+        // arriesgar falsos positivos en las demás familias de layout.
+        private static readonly Regex MontoEsArRegex = new($"({MontoPattern})", RegexOptions.Compiled);
+
         public InvoiceExtractionResult Extract(string text, string sourceFileName)
         {
             var result = new InvoiceExtractionResult
@@ -146,11 +230,30 @@ namespace FacturasIvaCompra.Infrastructure.Services
             };
             var factura = result.Factura;
             text ??= string.Empty;
+            var esRetencionSuss = RetencionSussSenalRegex.IsMatch(text);
 
             // Fecha_Comprobante_CC / Mes_CC / Anio_CC
             var fechaMatch = FechaEmisionRegex.Match(text);
             if (!fechaMatch.Success) fechaMatch = FechaEmisionArcaRegex.Match(text);
-            if (fechaMatch.Success && EsArNumberParser.TryParseFecha(fechaMatch.Groups[1].Value, out var fecha))
+            var fechaCruda = fechaMatch.Success ? fechaMatch.Groups[1].Value : null;
+            if (fechaCruda == null)
+            {
+                var fechaEtiquetaBareMatch = FechaEtiquetaBareRegex.Match(text);
+                if (fechaEtiquetaBareMatch.Success)
+                {
+                    fechaCruda = fechaEtiquetaBareMatch.Groups[1].Value;
+                }
+            }
+            if (fechaCruda == null)
+            {
+                var fechaBareMatch = FechaBareRegex.Match(text);
+                if (fechaBareMatch.Success)
+                {
+                    fechaCruda = $"{fechaBareMatch.Groups[1].Value}/{fechaBareMatch.Groups[2].Value}/{fechaBareMatch.Groups[3].Value}";
+                }
+            }
+
+            if (fechaCruda != null && EsArNumberParser.TryParseFecha(fechaCruda, out var fecha))
             {
                 factura.Fecha_Comprobante_CC = fecha;
                 factura.Mes_CC = fecha.Month;
@@ -162,7 +265,15 @@ namespace FacturasIvaCompra.Infrastructure.Services
             }
 
             // Tipo_Comprobante_CC — char(3) en SQL: código AFIP zero-padded (ver AfipCbteTypeMapper).
-            if (!TryExtractTipoComprobante(text, out var tipoComprobante))
+            // Excepción: constancias RET.SUSS no tienen tipo de comprobante AFIP (no son una
+            // factura); se usa el código marcador TipoComprobanteRetencionSuss.
+            int tipoComprobante;
+            if (esRetencionSuss)
+            {
+                factura.Tipo_Comprobante_CC = TipoComprobanteRetencionSuss;
+                tipoComprobante = 0;
+            }
+            else if (!TryExtractTipoComprobante(text, out tipoComprobante))
             {
                 result.MissingFields.Add(nameof(FacturaCompra.Tipo_Comprobante_CC));
             }
@@ -177,6 +288,8 @@ namespace FacturasIvaCompra.Infrastructure.Services
             var comprobanteMatch = ComprobanteNumeroEtiquetadoRegex.Match(text);
             if (!comprobanteMatch.Success)
                 comprobanteMatch = ComprobanteNumeroArcaRegex.Match(text);
+            if (!comprobanteMatch.Success)
+                comprobanteMatch = ComprobanteNumeroConLetraRegex.Match(text);
             if (!comprobanteMatch.Success)
                 comprobanteMatch = ComprobanteNumeroGenericoRegex.Match(text);
 
@@ -226,6 +339,8 @@ namespace FacturasIvaCompra.Infrastructure.Services
             // factura; el total real se repite igual varias veces hacia el pie del documento.
             var totalMatch = LastMatchOrDefault(TotalAPagarRegex, text);
             if (!totalMatch.Success) totalMatch = LastMatchOrDefault(ImporteTotalRegex, text);
+            if (!totalMatch.Success) totalMatch = LastMatchOrDefault(TotalBareRegex, text);
+            if (!totalMatch.Success && esRetencionSuss) totalMatch = LastMatchOrDefault(MontoEsArRegex, text);
             if (totalMatch.Success && EsArNumberParser.TryParseMonto(totalMatch.Groups[1].Value, out var total))
             {
                 factura.Importe_Total_Operacion_CC = total;
@@ -239,9 +354,10 @@ namespace FacturasIvaCompra.Infrastructure.Services
             // de la misma fila "IVA <alícuota>% <base>" cuando no hay etiqueta explícita).
             // Excepción: en Factura C (código AFIP 11) el emisor es Monotributista y no
             // discrimina IVA, por lo que el % de IVA nunca aparece en el comprobante — no es
-            // un dato faltante a revisar, es 0 por definición.
+            // un dato faltante a revisar, es 0 por definición. Misma lógica para constancias
+            // RET.SUSS, que directamente no tienen IVA discriminado (no son una factura).
             var porcIvaMatch = Match.Empty;
-            if (tipoComprobante == 11)
+            if (tipoComprobante == 11 || esRetencionSuss)
             {
                 factura.Porc_Iva_CC = 0;
             }
@@ -256,15 +372,24 @@ namespace FacturasIvaCompra.Infrastructure.Services
                 {
                     factura.Porc_Iva_CC = porcIvaTotales;
                 }
+                else if (TryExtractPorcIvaInsc(text, out var porcIvaInsc))
+                {
+                    factura.Porc_Iva_CC = porcIvaInsc;
+                }
                 else
                 {
                     result.MissingFields.Add(nameof(FacturaCompra.Porc_Iva_CC));
                 }
             }
 
-            // Neto_CC
+            // Neto_CC — no aplica a constancias RET.SUSS (no es una factura con neto gravado;
+            // la "Base de cálculo" de la tabla es la base de la retención, no un neto de venta).
             var netoMatch = NetoRegex.Match(text);
-            if (netoMatch.Success && EsArNumberParser.TryParseMonto(netoMatch.Groups[1].Value, out var neto))
+            if (esRetencionSuss)
+            {
+                factura.Neto_CC = 0;
+            }
+            else if (netoMatch.Success && EsArNumberParser.TryParseMonto(netoMatch.Groups[1].Value, out var neto))
             {
                 factura.Neto_CC = neto;
             }
@@ -325,7 +450,7 @@ namespace FacturasIvaCompra.Infrastructure.Services
             var conGuiones = CuitConGuionesRegex.Match(text);
             if (conGuiones.Success)
             {
-                var valor = conGuiones.Groups[1].Value;
+                var valor = QuitarEspacios(conGuiones.Groups[1].Value);
                 if (string.IsNullOrEmpty(cuitPropio) || valor.Replace("-", "") != cuitPropio)
                     return valor;
             }
@@ -338,11 +463,11 @@ namespace FacturasIvaCompra.Infrastructure.Services
                     return $"{digits.Substring(0, 2)}-{digits.Substring(2, 8)}-{digits.Substring(10, 1)}";
             }
 
-            // Fallback (plantilla ARCA): ninguna etiqueta "CUIT:" quedó adyacente a un valor
-            // que no sea el propio (Copan) — se toma el primer CUIT "pelado" del texto distinto
-            // del configurado en CompanySettings:CuitPropio.
             if (!string.IsNullOrEmpty(cuitPropio))
             {
+                // Fallback (plantilla ARCA): ninguna etiqueta "CUIT:" quedó adyacente a un valor
+                // que no sea el propio (Copan) — se toma el primer CUIT "pelado" del texto distinto
+                // del configurado en CompanySettings:CuitPropio.
                 var candidato = CuitBareRegex.Matches(text)
                     .Cast<Match>()
                     .Select(m => m.Value)
@@ -350,10 +475,26 @@ namespace FacturasIvaCompra.Infrastructure.Services
 
                 if (candidato != null)
                     return $"{candidato.Substring(0, 2)}-{candidato.Substring(2, 8)}-{candidato.Substring(10, 1)}";
+
+                // Fallback (plantilla STOP LOSS): el CUIT del emisor está en el membrete de
+                // imagen y solo llega si se agregó una pasada de OCR, cuya etiqueta "CUIT"
+                // puede salir mal reconocida (ver comentario de CuitBareConGuionesRegex) — se
+                // toma el primer CUIT "con guiones" del texto distinto del propio. Se prueba
+                // después del fallback "pelado" de arriba para no alterar el comportamiento ya
+                // validado de la plantilla ARCA.
+                var candidatoConGuiones = CuitBareConGuionesRegex.Matches(text)
+                    .Cast<Match>()
+                    .Select(m => QuitarEspacios(m.Value))
+                    .FirstOrDefault(v => v.Replace("-", "") != cuitPropio);
+
+                if (candidatoConGuiones != null)
+                    return candidatoConGuiones;
             }
 
             return null;
         }
+
+        private static string QuitarEspacios(string value) => Regex.Replace(value, @"\s+", "");
 
         private static string ExtractRazonSocial(string text)
         {
@@ -384,6 +525,16 @@ namespace FacturasIvaCompra.Infrastructure.Services
                     return true;
                 }
             }
+
+            porcIva = 0;
+            return false;
+        }
+
+        private static bool TryExtractPorcIvaInsc(string text, out decimal porcIva)
+        {
+            var match = PorcIvaInscRegex.Match(text);
+            if (match.Success && EsArNumberParser.TryParseMonto(match.Groups[1].Value, out porcIva))
+                return true;
 
             porcIva = 0;
             return false;

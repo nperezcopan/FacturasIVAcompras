@@ -153,10 +153,23 @@ namespace FacturasIvaCompra.Application.Services
             }
 
             var nativeText = nativeBuilder.ToString();
-            if (!string.IsNullOrWhiteSpace(nativeText))
+            var sinTextoEmbebido = string.IsNullOrWhiteSpace(nativeText);
+
+            // Proveedores con membrete de imagen (p.ej. STOP LOSS Bureau de Reaseguros): el CUIT
+            // y la razón social del emisor están en el gráfico de fondo, no en texto
+            // seleccionable — el texto nativo nunca va a contener la etiqueta "CUIT" en ese
+            // caso, aunque el resto del comprobante sí tenga texto embebido normal. Se
+            // complementa (no se reemplaza) con OCR para recuperar esos datos.
+            var sinSenalDeCuit = !sinTextoEmbebido && !nativeText.Contains("CUIT", StringComparison.OrdinalIgnoreCase);
+
+            if (!sinTextoEmbebido && !sinSenalDeCuit)
                 return nativeText;
 
-            _logger.LogInformation("{Pdf}: sin texto embebido. Ejecutando OCR ({Pages} página(s)).", pdfPath, pageCount);
+            _logger.LogInformation(
+                sinTextoEmbebido
+                    ? "{Pdf}: sin texto embebido. Ejecutando OCR ({Pages} página(s))."
+                    : "{Pdf}: texto embebido sin señal de CUIT (posible membrete de imagen). Complementando con OCR ({Pages} página(s)).",
+                pdfPath, pageCount);
 
             var dpi = int.TryParse(_configuration["OcrSettings:OcrResolutionDpi"], out var configuredDpi) ? configuredDpi : 300;
             var language = _configuration["OcrSettings:OcrLanguage"] ?? "spa";
@@ -164,26 +177,43 @@ namespace FacturasIvaCompra.Application.Services
 
             for (var i = 0; i < pageCount; i++)
             {
-                // Pasada 1: región parcial (0.45 → 1.0), más rápida.
-                var partialImageBytes = await Task.Run(
-                    () => _renderer.RenderPageRegionToImage(pdfPath, i, dpi, 0.45, 1.0), ct);
-                var pageText = await Task.Run(
-                    () => _ocrService.PerformOcr(partialImageBytes, language), ct);
-
-                var tieneSenal = SenalesFactura.Any(s => pageText.Contains(s, StringComparison.OrdinalIgnoreCase));
-                if (!tieneSenal)
+                string pageText;
+                if (sinSenalDeCuit)
                 {
-                    // Pasada 2: página completa, si la parcial no encontró indicios de factura.
+                    // El membrete con el CUIT/razón social del emisor suele estar en la franja
+                    // superior de la página, fuera de la región parcial (0.45 → 1.0) usada para
+                    // OCR rápido — se va directo a página completa en vez de arriesgarse a que
+                    // la pasada parcial encuentre otra señal (p.ej. "TOTAL") y se salte la
+                    // página completa sin haber cubierto el membrete.
                     var fullImageBytes = await Task.Run(
                         () => _renderer.RenderPageToImage(pdfPath, i, dpi), ct);
                     pageText = await Task.Run(
                         () => _ocrService.PerformOcr(fullImageBytes, language), ct);
                 }
+                else
+                {
+                    // Pasada 1: región parcial (0.45 → 1.0), más rápida.
+                    var partialImageBytes = await Task.Run(
+                        () => _renderer.RenderPageRegionToImage(pdfPath, i, dpi, 0.45, 1.0), ct);
+                    pageText = await Task.Run(
+                        () => _ocrService.PerformOcr(partialImageBytes, language), ct);
+
+                    var tieneSenal = SenalesFactura.Any(s => pageText.Contains(s, StringComparison.OrdinalIgnoreCase));
+                    if (!tieneSenal)
+                    {
+                        // Pasada 2: página completa, si la parcial no encontró indicios de factura.
+                        var fullImageBytes = await Task.Run(
+                            () => _renderer.RenderPageToImage(pdfPath, i, dpi), ct);
+                        pageText = await Task.Run(
+                            () => _ocrService.PerformOcr(fullImageBytes, language), ct);
+                    }
+                }
 
                 ocrBuilder.AppendLine(pageText);
             }
 
-            return ocrBuilder.ToString();
+            var ocrText = ocrBuilder.ToString();
+            return sinTextoEmbebido ? ocrText : nativeText + Environment.NewLine + ocrText;
         }
     }
 }
