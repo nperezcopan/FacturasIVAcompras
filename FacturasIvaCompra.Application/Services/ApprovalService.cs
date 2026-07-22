@@ -75,17 +75,15 @@ namespace FacturasIvaCompra.Application.Services
 
             var facturas = validRows.Select(r => r.ToFacturaCompra()).ToList();
 
-            // Fecha_Caja_Banco_CC: no se extrae del PDF (no aparece en ningún comprobante);
-            // se fija siempre al primer sábado del mes en curso al momento de grabar el lote.
-            var primerSabado = PrimerSabadoDelMes(DateTime.Today);
-
             // Nro_Proveedor: se resuelve por CUIT contra dbo.PROVEEDORES en vez de dejarlo null.
             var nrosProveedorPorCuit = await _repository.GetNrosProveedorPorCuitAsync(
                 facturas.Select(f => f.CUIT_Emisor_CC), ct);
 
             foreach (var factura in facturas)
             {
-                factura.Fecha_Caja_Banco_CC = primerSabado;
+                // Fecha_Caja_Banco_CC: no se extrae del PDF (no aparece en ningún comprobante);
+                // se fija al primer domingo del mes de la fecha de emisión del comprobante.
+                factura.Fecha_Caja_Banco_CC = PrimerDomingoDelMes(factura.Fecha_Comprobante_CC);
                 if (nrosProveedorPorCuit.TryGetValue(factura.CUIT_Emisor_CC.Trim(), out var nroProveedor))
                 {
                     factura.Nro_Proveedor = nroProveedor;
@@ -126,11 +124,11 @@ namespace FacturasIvaCompra.Application.Services
         private static ComprobanteKey ClaveDe(InvoicePreviewRow row) =>
             new(row.Tipo_Comprobante_CC, row.Punto_Venta_CC, row.Nro_Comprobante_CC, row.CUIT_Emisor_CC);
 
-        private static DateTime PrimerSabadoDelMes(DateTime referencia)
+        private static DateTime PrimerDomingoDelMes(DateTime referencia)
         {
             var primerDiaDelMes = new DateTime(referencia.Year, referencia.Month, 1);
-            var diasHastaSabado = ((int)DayOfWeek.Saturday - (int)primerDiaDelMes.DayOfWeek + 7) % 7;
-            return primerDiaDelMes.AddDays(diasHastaSabado);
+            var diasHastaDomingo = ((int)DayOfWeek.Sunday - (int)primerDiaDelMes.DayOfWeek + 7) % 7;
+            return primerDiaDelMes.AddDays(diasHastaDomingo);
         }
     }
 }
