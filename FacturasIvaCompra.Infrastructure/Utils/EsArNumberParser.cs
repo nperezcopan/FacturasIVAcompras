@@ -61,5 +61,32 @@ namespace FacturasIvaCompra.Infrastructure.Utils
             return DateTime.TryParseExact(raw.Trim(), formats, CultureInfo.GetCultureInfo("es-AR"),
                 DateTimeStyles.None, out fecha);
         }
+
+        private static readonly Dictionary<string, int> MesesEs = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ENERO"] = 1,
+            ["FEBRERO"] = 2,
+            ["MARZO"] = 3,
+            ["ABRIL"] = 4,
+            ["MAYO"] = 5,
+            ["JUNIO"] = 6,
+            ["JULIO"] = 7,
+            ["AGOSTO"] = 8,
+            ["SEPTIEMBRE"] = 9,
+            ["SETIEMBRE"] = 9,
+            ["OCTUBRE"] = 10,
+            ["NOVIEMBRE"] = 11,
+            ["DICIEMBRE"] = 12,
+        };
+
+        // Nombre de mes en español (ej. "Julio", usado en conceptos tipo "COMISIONES JULIO
+        // 2026") a número de mes. No usa CultureInfo porque los nombres pueden venir en
+        // mayúsculas sin tilde tal como salen del OCR/texto del PDF.
+        public static bool TryParseMesEs(string? nombreMes, out int mes)
+        {
+            mes = 0;
+            if (string.IsNullOrWhiteSpace(nombreMes)) return false;
+            return MesesEs.TryGetValue(nombreMes.Trim(), out mes);
+        }
     }
 }

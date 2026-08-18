@@ -62,6 +62,15 @@ namespace FacturasIvaCompra.Infrastructure.Services
         private static readonly Regex FechaEtiquetaBareRegex =
             new(@"\bFecha\s*:?\s*(\d{1,2}\s*/\s*\d{1,2}\s*/\s*\d{2,4})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+        // Facturas de comisiones (ej. agente/broker) cuyo concepto dice "COMISIONES JULIO 2026":
+        // la comisión facturada corresponde a un mes distinto al de emisión del comprobante, y
+        // Fecha_Caja_Banco_CC debe respetar el mes/año del concepto en vez del de emisión
+        // (decisión de negocio explícita). El año es opcional: si no aparece, se usa el año de
+        // Fecha_Comprobante_CC como fallback (ver Extract).
+        private static readonly Regex ComisionesConceptoRegex =
+            new(@"COMISIONES\s+(ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|SETIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE)(?:\s+(\d{4}))?",
+                RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         // Nota: PdfPig suele pegar palabras sin espacio en los puntos donde el layout original
         // usaba posicionamiento en vez de un glifo de espacio (p.ej. "Factura3108-00172981",
         // "N° 1ORIGINAL"). Como dígito y letra son ambos \w para .NET regex, un \b tradicional
@@ -125,8 +134,10 @@ namespace FacturasIvaCompra.Infrastructure.Services
         // "6,242.55" — típico del OCR (falla de kerning al reconocer el glifo). A diferencia de
         // MontoPattern no exige separador de miles ni 2 decimales exactos, porque acá el
         // objetivo es capturar el monto completo (para que EsArNumberParser.TryParseMonto lo
-        // interprete después), no delimitar campos pegados sin separador.
-        private const string MontoOcrPattern = @"\d{1,3}(?:[.,]\s?\d+)*";
+        // interprete después), no delimitar campos pegados sin separador. El primer grupo usa
+        // \d+ (no \d{1,3}) porque el monto puede venir sin separador de miles — con el tope en 3
+        // dígitos, un monto como "3788820,78" matcheaba solo "378" y truncaba el importe.
+        private const string MontoOcrPattern = @"\d+(?:[.,]\s?\d+)*";
 
         private static readonly Regex TotalAPagarRegex =
             new($@"Total\s+a\s+[Pp]agar\s*:?\s*\(?\$?\)?\s*({MontoOcrPattern})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -262,6 +273,30 @@ namespace FacturasIvaCompra.Infrastructure.Services
             else
             {
                 result.MissingFields.Add(nameof(FacturaCompra.Fecha_Comprobante_CC));
+            }
+
+            // MesComisionDetectado: ver comentario de ComisionesConceptoRegex.
+            var comisionesMatch = ComisionesConceptoRegex.Match(text);
+            if (comisionesMatch.Success && EsArNumberParser.TryParseMesEs(comisionesMatch.Groups[1].Value, out var mesComision))
+            {
+                var anioComisionGroup = comisionesMatch.Groups[2];
+                var anioComision = anioComisionGroup.Success
+                    ? int.Parse(anioComisionGroup.Value)
+                    : factura.Fecha_Comprobante_CC.Year;
+                if (anioComision > 0)
+                {
+                    result.MesComisionDetectado = new DateTime(anioComision, mesComision, 1);
+                }
+            }
+
+            // Fecha_Caja_Banco_CC: no se extrae del PDF, se calcula (primer domingo del mes de
+            // referencia — el de la comisión si se detectó, si no el de emisión) ya en la
+            // extracción para que se vea en la previsualización en vez de quedar vacía hasta
+            // aprobar el lote. Sigue siendo editable en la grilla antes de aprobar.
+            if (!result.MissingFields.Contains(nameof(FacturaCompra.Fecha_Comprobante_CC)))
+            {
+                var mesReferencia = result.MesComisionDetectado ?? factura.Fecha_Comprobante_CC;
+                factura.Fecha_Caja_Banco_CC = PrimerDomingoDelMes(mesReferencia);
             }
 
             // Tipo_Comprobante_CC — char(3) en SQL: código AFIP zero-padded (ver AfipCbteTypeMapper).
@@ -435,6 +470,13 @@ namespace FacturasIvaCompra.Infrastructure.Services
             }
 
             return result;
+        }
+
+        private static DateTime PrimerDomingoDelMes(DateTime referencia)
+        {
+            var primerDiaDelMes = new DateTime(referencia.Year, referencia.Month, 1);
+            var diasHastaDomingo = ((int)DayOfWeek.Sunday - (int)primerDiaDelMes.DayOfWeek + 7) % 7;
+            return primerDiaDelMes.AddDays(diasHastaDomingo);
         }
 
         private static bool TryExtractTipoComprobante(string text, out int tipoComprobanteCC)

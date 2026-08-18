@@ -20,5 +20,14 @@ namespace FacturasIvaCompra.Domain.Models
         public HashSet<string> CorrectedFields { get; } = new();
         public string RawText { get; set; } = string.Empty;
         public string SourceFileName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Mes/año detectado en el concepto de la factura cuando dice "COMISIONES &lt;mes&gt;
+        /// &lt;año&gt;" (día siempre 1). Null si el concepto no menciona comisiones de un mes
+        /// específico. Usado por ApprovalService para calcular Fecha_Caja_Banco_CC respetando
+        /// el mes de la comisión en vez del mes de emisión del comprobante — decisión de
+        /// negocio explícita.
+        /// </summary>
+        public DateTime? MesComisionDetectado { get; set; }
     }
 }

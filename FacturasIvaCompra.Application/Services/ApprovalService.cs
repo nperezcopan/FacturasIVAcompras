@@ -81,9 +81,12 @@ namespace FacturasIvaCompra.Application.Services
 
             foreach (var factura in facturas)
             {
-                // Fecha_Caja_Banco_CC: no se extrae del PDF (no aparece en ningún comprobante);
-                // se fija al primer domingo del mes de la fecha de emisión del comprobante.
-                factura.Fecha_Caja_Banco_CC = PrimerDomingoDelMes(factura.Fecha_Comprobante_CC);
+                // Fecha_Caja_Banco_CC: se calcula ya en la extracción (GenericInvoiceFieldExtractor,
+                // primer domingo del mes de emisión, salvo concepto "COMISIONES <mes> <año>") para
+                // que se vea en la previsualización y el usuario pueda corregirla a mano antes de
+                // aprobar; acá se respeta el valor de la fila tal cual llegó. Fallback defensivo
+                // por si algún extractor futuro no lo completa.
+                factura.Fecha_Caja_Banco_CC ??= PrimerDomingoDelMes(factura.Fecha_Comprobante_CC);
                 if (nrosProveedorPorCuit.TryGetValue(factura.CUIT_Emisor_CC.Trim(), out var nroProveedor))
                 {
                     factura.Nro_Proveedor = nroProveedor;

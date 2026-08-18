@@ -89,7 +89,7 @@ namespace FacturasIvaCompra.Application.Services
                 {
                     var text = await ExtractTextAsync(pdfPath, ct);
                     var extraction = _fieldExtractor.Extract(text, Path.GetFileName(pdfPath));
-                    results.Add(InvoicePreviewRow.FromExtraction(extraction.Factura, pdfPath, extraction.MissingFields, extraction.CorrectedFields));
+                    results.Add(InvoicePreviewRow.FromExtraction(extraction.Factura, pdfPath, extraction.MissingFields, extraction.CorrectedFields, extraction.MesComisionDetectado));
                     _logger.LogInformation("{File}: procesado, {Missing} campo(s) críticos pendientes de revisión.",
                         Path.GetFileName(pdfPath), extraction.MissingFields.Count);
                 }

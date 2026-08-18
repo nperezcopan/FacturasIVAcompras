@@ -45,6 +45,12 @@ namespace FacturasIvaCompra.Application.Models
         public int? Nro_Proveedor { get; set; }
         public DateTime? Fecha_Caja_Banco_CC { get; set; }
 
+        /// <summary>
+        /// Mes/año detectado en el concepto ("COMISIONES &lt;mes&gt; &lt;año&gt;"). Usado solo por
+        /// ApprovalService para calcular Fecha_Caja_Banco_CC; no es una columna de FacturaCompra/SQL.
+        /// </summary>
+        public DateTime? MesComisionDetectado { get; set; }
+
         /// <summary>Nombres de propiedad cuyo valor no pudo extraerse; usado solo por el grid, no se persiste.</summary>
         public HashSet<string> MissingFields { get; set; } = new();
 
@@ -53,13 +59,15 @@ namespace FacturasIvaCompra.Application.Models
         public bool HasPendingReview => MissingFields.Count > 0;
 
         public static InvoicePreviewRow FromExtraction(
-            FacturaCompra factura, string sourceFilePath, HashSet<string> missingFields, HashSet<string> correctedFields)
+            FacturaCompra factura, string sourceFilePath, HashSet<string> missingFields, HashSet<string> correctedFields,
+            DateTime? mesComisionDetectado = null)
         {
             return new InvoicePreviewRow
             {
                 SourceFilePath = sourceFilePath,
                 MissingFields = new HashSet<string>(missingFields),
                 CorrectedFields = new HashSet<string>(correctedFields),
+                MesComisionDetectado = mesComisionDetectado,
                 Mes_CC = factura.Mes_CC,
                 Anio_CC = factura.Anio_CC,
                 Fecha_Comprobante_CC = factura.Fecha_Comprobante_CC,
