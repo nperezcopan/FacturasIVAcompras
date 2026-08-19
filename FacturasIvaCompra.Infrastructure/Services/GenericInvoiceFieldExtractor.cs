@@ -62,13 +62,22 @@ namespace FacturasIvaCompra.Infrastructure.Services
         private static readonly Regex FechaEtiquetaBareRegex =
             new(@"\bFecha\s*:?\s*(\d{1,2}\s*/\s*\d{1,2}\s*/\s*\d{2,4})", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        // Facturas de comisiones (ej. agente/broker) cuyo concepto dice "COMISIONES JULIO 2026":
+        // Facturas de comisiones (ej. agente/broker) cuyo concepto dice "COMISIONES JULIO 2026",
+        // o variantes con texto intermedio como "POR COMISIONES DE SEGUROS MES DE JUNIO DE 2026":
         // la comisión facturada corresponde a un mes distinto al de emisión del comprobante, y
         // Fecha_Caja_Banco_CC debe respetar el mes/año del concepto en vez del de emisión
-        // (decisión de negocio explícita). El año es opcional: si no aparece, se usa el año de
-        // Fecha_Comprobante_CC como fallback (ver Extract).
+        // (decisión de negocio explícita). Se tolera hasta 150 caracteres cualesquiera (incl.
+        // saltos de línea) entre "COMISIONES" y el mes: en la plantilla ARCA, el texto de la
+        // celda "Producto/Servicio" queda partido en dos líneas por el OCR ("...MES DE" /
+        // "JUNIO DE 2026"), con las demás columnas de esa misma fila (cantidad, precio, alícuota,
+        // subtotal) intercaladas en el medio por el orden de lectura reconstruido — de ahí que no
+        // alcance con tolerar solo unas pocas palabras. El año es opcional: si no aparece, se usa
+        // el año de Fecha_Comprobante_CC como fallback (ver Extract). El (?!\d) evita que un
+        // número largo pegado al concepto (p.ej. "COMISIONES JUNIO 106406", un código de
+        // liquidación) se interprete como los primeros 4 dígitos de un año inexistente (daba
+        // Anio_CC = 1064).
         private static readonly Regex ComisionesConceptoRegex =
-            new(@"COMISIONES\s+(ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|SETIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE)(?:\s+(\d{4}))?",
+            new(@"COMISIONES[\s\S]{0,150}?(ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|SETIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE)(?:\s+(\d{4})(?!\d))?",
                 RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         // Nota: PdfPig suele pegar palabras sin espacio en los puntos donde el layout original

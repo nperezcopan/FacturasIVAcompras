@@ -3,6 +3,7 @@ using System.IO;
 using System.Drawing;
 using System.Drawing.Imaging;
 using PDFiumSharp;
+using PDFiumSharp.Types;
 using FacturasIvaCompra.Domain.Interfaces;
 
 namespace FacturasIvaCompra.Infrastructure.Services
@@ -31,6 +32,12 @@ namespace FacturasIvaCompra.Infrastructure.Services
             int fullHeight = (int)(page.Height * scale);
 
             using var pdfiumBitmap = new PDFiumBitmap(fullWidth, fullHeight, false);
+            // Sin este relleno, PDFium deja en negro cualquier zona de la página que no tenga
+            // un rectángulo blanco explícito de fondo (p.ej. plantillas ARCA con celdas de
+            // tabla sin fill propio). Eso tapa el texto ahí y el OCR nunca lo detecta, aunque
+            // el PDF sí lo tenga (visto en la celda "Producto/Servicio" con el concepto
+            // "COMISIONES...").
+            pdfiumBitmap.Fill(new PDFiumColor(255, 255, 255, 255));
             page.Render(pdfiumBitmap);
 
             using var fullBitmap = new Bitmap(
