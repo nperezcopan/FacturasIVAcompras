@@ -29,4 +29,19 @@
     <Version>1.0.0</Version>
   </PropertyGroup>
 
+  <!--
+    Tesseract.dll usa InteropDotNet.LibraryLoader, que resuelve sus DLLs nativas
+    (leptonica/tesseract50) a partir de Assembly.Location del propio Tesseract.dll.
+    En PublishSingleFile los ensamblados embebidos reportan Location vacío, lo que
+    revienta ese loader con ArgumentNullException. Se excluye del bundle para que
+    quede como archivo físico en disco y Location siga siendo válido.
+  -->
+  <Target Name="ExcludeTesseractFromSingleFile" BeforeTargets="GenerateSingleFileBundle" DependsOnTargets="PrepareForBundle" Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <_TesseractFileToUnbundle Include="@(FilesToBundle)" Condition="'%(FileName)' == 'Tesseract'" />
+      <FilesToBundle Remove="@(_TesseractFileToUnbundle)" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_TesseractFileToUnbundle)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>
